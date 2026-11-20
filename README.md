@@ -96,7 +96,7 @@ curl http://127.0.0.1:3425/v1/chat/completions \
 **不要引用 OpenAI 官方 API 的规格**（1M 上下文 / 64K 输出）。本项目走的是 duck.ai 免费网页接口，限制完全不同：
 
 - **不接受 `max_tokens` 参数**：实测 4096～128000 全部返回 `400 ERR_BAD_REQUEST`。输出长度由 duck.ai 自己决定，bridge 会忽略 Agent 传来的 max_tokens。
-- **输入上限约 2 万字符（~1 万 token）**：16000 字符正常，24000 字符报 `ERR_INPUT_LIMIT`，128000 字符报 `ERR_CONVERSATION_LIMIT`。
+- **输入上限约 18000-20000 字符（中文≈9000-18000 token，二分法实测）**：18000 字符正常，20000 字符报 `ERR_INPUT_LIMIT`，128000 字符报 `ERR_CONVERSATION_LIMIT`。
 - duck.ai 模型目录里**没有任何 token 限制字段**，官方数字不适用于此链路。
 
 ## ⚠️ 已知限制
