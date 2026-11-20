@@ -26,7 +26,8 @@ setGlobalDispatcher(new ProxyAgent(PROXY));
 async function getVQD() {
   const r = await fetch('https://duck.ai/duckchat/v1/status', {
     headers: { 'accept':'*/*','accept-language':'en-US,en;q=0.9,fa;q=0.8','cache-control':'no-store','x-vqd-accept':'1','User-Agent':UA },
-    referrer: 'https://duck.ai/', referrerPolicy: 'origin'
+    referrer: 'https://duck.ai/', referrerPolicy: 'origin',
+    signal: AbortSignal.timeout(8000) // 防止上游/代理挂起导致无限等待
   });
   if (!r.ok) throw new Error('duck.ai status HTTP ' + r.status);
   const h = r.headers.get('x-vqd-hash-1');
@@ -97,25 +98,39 @@ async function duckChat(body) {
     return {role, content};
   });
   const payload = {model, messages, canUseTools:false, reasoningEffort:'none'};
-  let r = null, text = '';
-  // 418 时重新获取+重解挑战。重试次数和退避要压在最坏 <20s（Agent ~25s 超时，
-  // 超过就会被取消，表现为"回复中断/请继续"）。4次×(解挑战~1s+退避≤2s)≈12s。
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const hash = await getVQD();
-    const solved = await solveVQD(hash);
-    r = await fetch('https://duck.ai/duckchat/v1/chat', {
-      method:'POST',
-      headers:{
-        'accept':'text/event-stream','accept-language':'en-US,en;q=0.9','cache-control':'no-cache',
-        'content-type':'application/json','pragma':'no-cache','priority':'u=0',
-        'sec-fetch-dest':'empty','sec-fetch-mode':'cors','sec-fetch-site':'same-origin',
-        'User-Agent':UA, 'x-vqd-hash-1':solved
-      },
-      referrer:'https://duck.ai/', referrerPolicy:'origin', body:JSON.stringify(payload)
-    });
-    text = await r.text();
-    if (r.status !== 418) break;
-    await new Promise(ok => setTimeout(ok, 500 + attempt * 500)); // 0.5/1/1.5s，压低最坏延迟
+  let r = null, text = '', lastErr = null;
+  // 总预算硬约束：绝不超过 Agent ~25s 超时（否则被取消→"回复中断/请继续"）。
+  // 单次 fetch 也有超时，防止上游/代理挂起。18s 预算留 7s 余量给网关+Agent。
+  const deadline = Date.now() + 18000;
+  for (let attempt = 0; attempt < 4 && Date.now() < deadline; attempt++) {
+    try {
+      const hash = await getVQD();
+      const solved = await solveVQD(hash);
+      r = await fetch('https://duck.ai/duckchat/v1/chat', {
+        method:'POST',
+        headers:{
+          'accept':'text/event-stream','accept-language':'en-US,en;q=0.9','cache-control':'no-cache',
+          'content-type':'application/json','pragma':'no-cache','priority':'u=0',
+          'sec-fetch-dest':'empty','sec-fetch-mode':'cors','sec-fetch-site':'same-origin',
+          'User-Agent':UA, 'x-vqd-hash-1':solved
+        },
+        referrer:'https://duck.ai/', referrerPolicy:'origin', body:JSON.stringify(payload),
+        signal: AbortSignal.timeout(Math.max(2000, Math.min(10000, deadline - Date.now()))) // 单次≤10s，且不超总预算
+      });
+      text = await r.text();
+      lastErr = null;
+      if (r.status !== 418) break;
+    } catch (e) {
+      lastErr = e; r = null;
+      if (Date.now() >= deadline) break; // 总预算到，放弃
+    }
+    if (Date.now() + 1500 >= deadline) break; // 没时间再退避重试
+    await new Promise(ok => setTimeout(ok, 500 + attempt * 500)); // 0.5/1/1.5s
+  }
+  if (!r) {
+    const err = new Error(`duck.ai 请求超时/失败: ${lastErr?.message || '超过18s预算'}`);
+    err.status = 504;
+    throw err;
   }
   if (!r.ok) {
     let detail = text.slice(0,300);
