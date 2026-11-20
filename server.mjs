@@ -98,8 +98,9 @@ async function duckChat(body) {
   });
   const payload = {model, messages, canUseTools:false, reasoningEffort:'none'};
   let r = null, text = '';
-  // 418 时重新获取+重解挑战（复用同一 solved hash 无效——挑战解算本身可能不稳）
-  for (let attempt = 0; attempt < 6; attempt++) {
+  // 418 时重新获取+重解挑战。重试次数和退避要压在最坏 <20s（Agent ~25s 超时，
+  // 超过就会被取消，表现为"回复中断/请继续"）。4次×(解挑战~1s+退避≤2s)≈12s。
+  for (let attempt = 0; attempt < 4; attempt++) {
     const hash = await getVQD();
     const solved = await solveVQD(hash);
     r = await fetch('https://duck.ai/duckchat/v1/chat', {
@@ -114,7 +115,7 @@ async function duckChat(body) {
     });
     text = await r.text();
     if (r.status !== 418) break;
-    await new Promise(ok => setTimeout(ok, (attempt+1)*1500));
+    await new Promise(ok => setTimeout(ok, 500 + attempt * 500)); // 0.5/1/1.5s，压低最坏延迟
   }
   if (!r.ok) {
     let detail = text.slice(0,300);
