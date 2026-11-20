@@ -1,0 +1,1 @@
+{"name":"duckai-bridge","version":"0.1.0","type":"module","dependencies":{"jsdom":"^25.0.1","undici":"^8.13.0"}}
