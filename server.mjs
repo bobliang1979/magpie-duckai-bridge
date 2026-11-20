@@ -19,6 +19,9 @@ const PORT = Number(process.env.DUCKAI_PORT || 3426);
 const PROXY = process.env.DUCKAI_PROXY || 'http://127.0.0.1:29758';
 const UA = process.env.DUCKAI_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 const VQD_STACK = process.env.DUCKAI_VQD_STACK || 'l@https://duck.ai/dist/duckai-dist/entry.duckai.c9340e95bd2f7fdc3302.js:2:1308110\n';
+// 总预算：默认 18s（保护 Agent 25s 超时）。长输出场景可用 DUCKAI_BUDGET_MS 调大。
+const BUDGET_MS = Number(process.env.DUCKAI_BUDGET_MS || 18000);
+const FETCH_TIMEOUT_MS = Number(process.env.DUCKAI_FETCH_TIMEOUT_MS || 10000);
 
 setGlobalDispatcher(new ProxyAgent(PROXY));
 
@@ -97,11 +100,13 @@ async function duckChat(body) {
     }
     return {role, content};
   });
+  // ⚠️ duck.ai 不接受 max_tokens 参数（实测 4096~128000 全部 400 ERR_BAD_REQUEST）。
+  // 输出长度由 duck.ai 自己决定，不能也不必透传。Agent 发的 max_tokens 一律忽略。
   const payload = {model, messages, canUseTools:false, reasoningEffort:'none'};
   let r = null, text = '', lastErr = null;
   // 总预算硬约束：绝不超过 Agent ~25s 超时（否则被取消→"回复中断/请继续"）。
   // 单次 fetch 也有超时，防止上游/代理挂起。18s 预算留 7s 余量给网关+Agent。
-  const deadline = Date.now() + 18000;
+  const deadline = Date.now() + BUDGET_MS;
   for (let attempt = 0; attempt < 4 && Date.now() < deadline; attempt++) {
     try {
       const hash = await getVQD();
@@ -115,7 +120,7 @@ async function duckChat(body) {
           'User-Agent':UA, 'x-vqd-hash-1':solved
         },
         referrer:'https://duck.ai/', referrerPolicy:'origin', body:JSON.stringify(payload),
-        signal: AbortSignal.timeout(Math.max(2000, Math.min(10000, deadline - Date.now()))) // 单次≤10s，且不超总预算
+        signal: AbortSignal.timeout(Math.max(2000, Math.min(FETCH_TIMEOUT_MS, deadline - Date.now()))) // 单次超时，且不超总预算
       });
       text = await r.text();
       lastErr = null;
