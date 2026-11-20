@@ -88,11 +88,21 @@ curl http://127.0.0.1:3425/v1/chat/completions \
 | `DUCKAI_PROXY` | `http://127.0.0.1:29758` | 代理地址；直连环境可设为 `''` 或修改代码里的 ProxyAgent |
 | `DUCKAI_UA` | Chrome 138 UA | User-Agent |
 | `DUCKAI_VQD_STACK` | 内置 | 反爬 stack；若持续 418，从浏览器 DevTools `new Error().stack` 抓当前值填入 |
+| `DUCKAI_BUDGET_MS` | `18000` | 单次请求总预算（毫秒）；长输出可调大，但增加 Agent 超时风险 |
+| `DUCKAI_FETCH_TIMEOUT_MS` | `10000` | 单次上游 fetch 超时（毫秒） |
+
+## ⚠️ token 限制（实测，与官方 API 不同）
+
+**不要引用 OpenAI 官方 API 的规格**（1M 上下文 / 64K 输出）。本项目走的是 duck.ai 免费网页接口，限制完全不同：
+
+- **不接受 `max_tokens` 参数**：实测 4096～128000 全部返回 `400 ERR_BAD_REQUEST`。输出长度由 duck.ai 自己决定，bridge 会忽略 Agent 传来的 max_tokens。
+- **输入上限约 2 万字符（~1 万 token）**：16000 字符正常，24000 字符报 `ERR_INPUT_LIMIT`，128000 字符报 `ERR_CONVERSATION_LIMIT`。
+- duck.ai 模型目录里**没有任何 token 限制字段**，官方数字不适用于此链路。
 
 ## ⚠️ 已知限制
 
 1. **VQD stack 会过期**：duck.ai 更新前端 bundle 后，内置 stack 失效会导致持续 418。需从真实浏览器抓新值。
-2. **延迟波动**：反爬重试导致偶发慢请求（可达 49s），Agent 超时需设 60s+。
+2. **延迟波动**：反爬重试导致偶发慢请求，bridge 有 18s 硬预算（Agent 超时建议 60s+）。可用 `DUCKAI_BUDGET_MS` / `DUCKAI_FETCH_TIMEOUT_MS` 调整，但调大会增加 Agent 超时风险。
 3. **依赖代理**：直连被 451 封锁的地区必须配代理。
 4. **非官方**：逆向私有接口，duck.ai 随时可能改协议导致失效。仅供研究/个人使用。
 
